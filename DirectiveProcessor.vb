@@ -13,7 +13,7 @@
 '                             → HTML statis tanpa <<…>>: blok if dipertahankan/dibuang, baris tabel di-clone
 '                             per item, <<var>> diganti nilainya, <<Page Break>> → div.page-break.
 '                             Hanya <<page>>/<<totalpages>> yang dibiarkan (diisi paginate.js per halaman).
-'  bodyN.html / PageN.html (langkah 2) TIDAK diproses — directive tetap teks merah persis seperti di PDF.
+'  PageN.html (langkah 2) TIDAK diproses — directive tetap teks merah persis seperti di PDF.
 '
 '  Syarat: penanda awal & akhir harus sejajar — tag HTML di antaranya seimbang
 '  (mis. keduanya di luar <ol>, bukan satu di dalam <li> dan satu di luar).

@@ -7,6 +7,7 @@ Friend Module Program
     '''     --riders = contoh variabel VB (String()) yang dikirim ke template sebagai data("riders");
     '''     tanpa --riders → pakai data.js di folder (kalau ada) / mode template.
     ''' "--riplay <pdf>" → Generate Riplay (6 langkah, lihat RiplayGenerator.vb) lalu keluar.
+    ''' "--html2pdf <folder>" → HTML to PDF: folder HTML hasil langkah 2 (boleh diedit) → data.js → AllBody → AllPages → AllPages.pdf lalu keluar.
     ''' Dengan argumen path PDF → mode CLI: generate lalu keluar (exit code 0 = sukses, 1 = gagal).
     ''' </summary>
     <STAThread()>
@@ -15,7 +16,10 @@ Friend Module Program
         Dim assembleFolder As String = Nothing
         Dim assembleData As Dictionary(Of String, Object) = Nothing
         Dim riplayPdf As String = Nothing
-        If args.Length >= 2 AndAlso args(0) = "--ui" Then
+        Dim htmlFolder As String = Nothing
+        If args.Length >= 2 AndAlso args(0) = "--html2pdf" Then
+            htmlFolder = args(1)
+        ElseIf args.Length >= 2 AndAlso args(0) = "--ui" Then
             initialPdf = args(1)
         ElseIf args.Length >= 2 AndAlso args(0) = "--riplay" Then
             riplayPdf = args(1)
@@ -50,9 +54,10 @@ Friend Module Program
         Dim logFile As String = Nothing
         If riplayPdf IsNot Nothing Then logFile = IO.Path.Combine(Generator.OutputDirFor(riplayPdf), "riplay.log")
         If assembleFolder IsNot Nothing Then logFile = IO.Path.Combine(assembleFolder, "riplay.log")
+        If htmlFolder IsNot Nothing Then logFile = IO.Path.Combine(htmlFolder, "riplay.log")
         If logFile IsNot Nothing AndAlso IO.File.Exists(logFile) Then IO.File.Delete(logFile)
         Application.Run(New Form1 With {.InitialPdf = initialPdf, .AssembleFolder = assembleFolder, .AssembleData = assembleData,
-                                        .RiplayPdf = riplayPdf, .LogFile = logFile})
+                                        .RiplayPdf = riplayPdf, .HtmlFolder = htmlFolder, .LogFile = logFile})
         Return 0
     End Function
 

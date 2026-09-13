@@ -1,13 +1,14 @@
 ' =====================================================================
 '  RiplayGenerator.vb — tombol "Generate Riplay": PDF template → AllPages.html / AllPages.pdf berisi data
+'                       tombol "HTML to PDF"    : folder HTML hasil langkah 2 (boleh diedit) → langkah 2–6 (FromHtmlAsync)
 '
 '  Langkah:
 '    1. Kumpulkan variabel VB yang dikirim ke HTML → RiplayData.Build() (sementara hardcode).
-'    2. Pecah PDF → header.html, footer.html, bodyN.html, PageN.html (Generator.Run).
+'    2. Pecah PDF → header.html, footer.html, Page1..N.html (Generator.Run). PageN.html = body halaman itu saja + css.
 '       HTML-nya STATIS persis seperti PDF: <<if>>, <<endif>>, <<Page Break>>, <<var.field>> tetap teks merah.
 '    3. Tulis semua variabel ke SATU file data.js (RiplayData.Write: window.riplayData = {...}).
 '    4. Jalankan semua directive dengan data (DirectiveProcessor.Execute, di VB):
-'       gabungkan body1..N → satu teks, lalu <<if>> dievaluasi (blok dipertahankan/dibuang), baris tabel
+'       gabungkan isi .bdy dari Page1..N.html → satu teks, lalu <<if>> dievaluasi (blok dipertahankan/dibuang), baris tabel
 '       <<arr.field>> di-clone per item, <<var>> diganti nilainya, <<Page Break>> → div.page-break
 '       → AllBody.html tanpa directive sama sekali (hanya <<page>>/<<totalpages>> di footer yang menunggu langkah 5).
 '    5. header.html + footer.html + AllBody.html → AllPages.html (PageAssembler + WebView2 paginate.js):
@@ -26,30 +27,63 @@ Public Class RiplayGenerator
     Public Const AllPagesPdf As String = "AllPages.pdf"
 
     Private Shared ReadOnly Utf8NoBom As New UTF8Encoding(False)
-    ' isi di dalam <div class="bdy" …> … </div> (greedy → sampai </div> terakhir)
+    ' isi di dalam <div class="bdy" …> … </div>:
+    '   dokumen PageN.html → sampai </div> yang diikuti <div class="ftr"> (ada footer) atau </div></body> (body saja)
+    Private Shared ReadOnly BdyDocRx As New Regex("<div class=""bdy""[^>]*>\s*(.*?)</div>\s*(?=<div class=""ftr""|</div>\s*</body>)", RegexOptions.Singleline Or RegexOptions.IgnoreCase)
+    '   potongan tanpa <html> (bodyN.html lama) → sampai </div> terakhir
     Private Shared ReadOnly BdyRx As New Regex("^\s*<div class=""bdy""[^>]*>\s*(.*)</div>\s*$", RegexOptions.Singleline)
     Private Shared ReadOnly BdyTopRx As New Regex("<div class=""bdy""[^>]*top:\s*([\d.]+)mm", RegexOptions.IgnoreCase)
 
-    ''' <summary>Jalankan langkah 1–6. Mengembalikan folder output.</summary>
+    ''' <summary>Tombol "Generate Riplay": langkah 1–6 dari PDF template. Mengembalikan folder output.</summary>
     Public Shared Async Function RunAsync(pdfPath As String, web As WebView2, log As Action(Of String)) As Task(Of String)
         ' ---- 1. data: semua variabel VB di satu Dictionary (RiplayData.Build) ----
         Dim data = RiplayData.Build()
         log("Langkah 1: kumpulkan variabel → " & JsonSerializer.Serialize(data))
 
         ' ---- 2. pecah PDF → HTML statis (directive tetap teks merah) ----
-        log("Langkah 2: pecah PDF → header.html, footer.html, bodyN.html, PageN.html (directive <<…>> dibiarkan seperti di PDF)")
+        log("Langkah 2: pecah PDF → header.html, footer.html, Page1..N.html (body saja; directive <<…>> dibiarkan seperti di PDF)")
         Dim outDir = Await Task.Run(Function() Generator.Run(pdfPath, log))
 
+        ' ---- 3–6 ----
+        Await FinishAsync(outDir, data, web, log)
+        Return outDir
+    End Function
+
+    ''' <summary>
+    ''' Tombol "HTML to PDF": folder berisi header.html, footer.html, Page1..N.html, page.css (hasil langkah 2 yang
+    ''' boleh sudah diedit) → langkah 2–6: Build → data.js → jalankan directive → AllBody → AllPages → AllPages.pdf.
+    ''' Mengembalikan folder itu.
+    ''' </summary>
+    Public Shared Async Function FromHtmlAsync(folder As String, web As WebView2, log As Action(Of String)) As Task(Of String)
+        ' ---- 1. folder ----
+        If Not Directory.Exists(folder) Then Throw New DirectoryNotFoundException("Folder tidak ditemukan: " & folder)
+        For Each f In {GlobalSettings.HeaderFileName, GlobalSettings.FooterFileName, GlobalSettings.CssFileName}
+            If Not File.Exists(Path.Combine(folder, f)) Then Throw New FileNotFoundException("Folder harus berisi " & f & " (hasil langkah 2 Generate Riplay)", f)
+        Next
+        If PageFiles(folder).Count = 0 Then
+            Throw New FileNotFoundException("Tidak ada Page1.html … PageN.html di " & folder)
+        End If
+        log("Langkah 1: folder HTML = " & folder)
+
+        ' ---- 2. data ----
+        Dim data = RiplayData.Build()
+        log("Langkah 2: kumpulkan variabel → " & JsonSerializer.Serialize(data))
+
+        ' ---- 3–6 ----
+        Await FinishAsync(folder, data, web, log)
+        Return folder
+    End Function
+
+    ''' <summary>Langkah 3–6 (dipakai Generate Riplay dan HTML to PDF): data.js → AllBody.html → AllPages.html → AllPages.pdf.</summary>
+    Private Shared Async Function FinishAsync(outDir As String, data As Dictionary(Of String, Object), web As WebView2, log As Action(Of String)) As Task
         ' ---- 3. tulis variabel ke satu file data.js ----
         Dim dataJs = RiplayData.Write(outDir, data)
         log("Langkah 3: " & dataJs & " ← window.riplayData = {…}")
 
         ' ---- 4. jalankan semua directive dengan data → AllBody.html tanpa <<…>> ----
-        Dim bodies = Directory.GetFiles(outDir, "body*.html").
-            Select(Function(f) New With {.Path = f, .N = BodyNumber(f)}).
-            Where(Function(x) x.N > 0).OrderBy(Function(x) x.N).Select(Function(x) x.Path).ToList()
-        If bodies.Count = 0 Then Throw New InvalidOperationException("Tidak ada bodyN.html di " & outDir)
-        log($"Langkah 4: jalankan directive di {bodies.Count} body dengan data.js → {AllBodyFile}" &
+        Dim bodies = PageFiles(outDir)
+        If bodies.Count = 0 Then Throw New InvalidOperationException("Tidak ada Page1.html … PageN.html di " & outDir)
+        log($"Langkah 4: jalankan directive di {bodies.Count} halaman (Page1..{bodies.Count}.html) dengan data.js → {AllBodyFile}" &
             If(GlobalSettings.BreakBetweenSourcePages, " (tiap halaman sumber mulai di halaman baru)", " (mengalir; halaman baru hanya di <<Page Break>>)"))
         Dim json = JsonSerializer.SerializeToElement(data)
         Dim allBodyPath = MergeBodies(outDir, bodies, json, log)
@@ -66,16 +100,22 @@ Public Class RiplayGenerator
         log($"Langkah 6: AllPages.html → {AllPagesPdf}")
         Await PdfExporter.ExportAsync(allPages, pdfOut, web, log)
         log("  ✓ " & pdfOut)
-        Return outDir
     End Function
 
-    Private Shared Function BodyNumber(file As String) As Integer
-        Dim m = Regex.Match(Path.GetFileName(file), "^body(\d+)\.html$", RegexOptions.IgnoreCase)
+    Private Shared Function PageNumber(file As String) As Integer
+        Dim m = Regex.Match(Path.GetFileName(file), "^Page(\d+)\.html$", RegexOptions.IgnoreCase)
         Return If(m.Success, Integer.Parse(m.Groups(1).Value), 0)
     End Function
 
+    ''' <summary>Page1.html … PageN.html di folder, urut nomor (file body per halaman hasil langkah 2).</summary>
+    Public Shared Function PageFiles(folder As String) As List(Of String)
+        Return Directory.GetFiles(folder, "Page*.html").
+            Select(Function(f) New With {.Path = f, .N = PageNumber(f)}).
+            Where(Function(x) x.N > 0).OrderBy(Function(x) x.N).Select(Function(x) x.Path).ToList()
+    End Function
+
     ''' <summary>
-    ''' Langkah 4: isi semua bodyN.html digabung ke satu &lt;div class="bdy"&gt;, lalu SEMUA directive dijalankan
+    ''' Langkah 4: isi .bdy semua PageN.html digabung ke satu &lt;div class="bdy"&gt;, lalu SEMUA directive dijalankan
     ''' dengan data (DirectiveProcessor.Execute) → AllBody.html statis tanpa &lt;&lt;…&gt;&gt;.
     ''' File ini bisa dibuka di browser (halaman memanjang) dan menjadi input PageAssembler (BodyFile = AllBody.html).
     ''' data = Nothing → directive dibiarkan (mode template).
@@ -91,7 +131,8 @@ Public Class RiplayGenerator
                 Dim mt = BdyTopRx.Match(html)
                 topMm = If(mt.Success, mt.Groups(1).Value, "0")
             End If
-            Dim m = BdyRx.Match(html)
+            Dim m = BdyDocRx.Match(html)
+            If Not m.Success Then m = BdyRx.Match(html)
             Dim inner = If(m.Success, m.Groups(1).Value, html).TrimEnd()
             If Not first AndAlso GlobalSettings.BreakBetweenSourcePages Then body.AppendLine("<div class=""page-break""></div>")
             body.AppendLine($"<!-- {Path.GetFileName(f)} -->")

@@ -26,6 +26,7 @@ Partial Class Form1
         lblHint = New Label()
         btnGeneratePdf = New Button()
         btnGenerateRiplay = New Button()
+        btnHtmlToPdf = New Button()
         web = New Microsoft.Web.WebView2.WinForms.WebView2()
         CType(web, System.ComponentModel.ISupportInitialize).BeginInit()
         SuspendLayout()
@@ -38,6 +39,16 @@ Partial Class Form1
         btnGeneratePdf.Text = "Generate PDF"
         btnGeneratePdf.UseVisualStyleBackColor = True
         '
+        ' btnHtmlToPdf (folder HTML hasil langkah 2, boleh diedit → data.js → AllBody → AllPages → AllPages.pdf)
+        ' 
+        btnHtmlToPdf.Anchor = AnchorStyles.Top Or AnchorStyles.Right
+        btnHtmlToPdf.Location = New Point(599, 42)
+        btnHtmlToPdf.Name = "btnHtmlToPdf"
+        btnHtmlToPdf.Size = New Size(112, 25)
+        btnHtmlToPdf.TabIndex = 9
+        btnHtmlToPdf.Text = "HTML to PDF"
+        btnHtmlToPdf.UseVisualStyleBackColor = True
+        ' 
         ' btnGenerateRiplay (PDF → HTML + data → AllBody.html → AllPages.html)
         '
         btnGenerateRiplay.Location = New Point(463, 42)
@@ -125,6 +136,7 @@ Partial Class Form1
         Controls.Add(web)
         Controls.Add(btnGeneratePdf)
         Controls.Add(btnGenerateRiplay)
+        Controls.Add(btnHtmlToPdf)
         Controls.Add(lblHint)
         Controls.Add(txtLog)
         Controls.Add(btnOpenOutput)
@@ -150,5 +162,6 @@ Partial Class Form1
     Friend WithEvents lblHint As Label
     Friend WithEvents btnGeneratePdf As Button
     Friend WithEvents btnGenerateRiplay As Button
+    Friend WithEvents btnHtmlToPdf As Button
     Friend WithEvents web As Microsoft.Web.WebView2.WinForms.WebView2
 End Class

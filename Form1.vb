@@ -16,6 +16,9 @@ Public Class Form1
     ''' <summary>Mode "--riplay &lt;pdf&gt;": jalankan Generate Riplay untuk PDF ini lalu tutup.</summary>
     Public Property RiplayPdf As String
 
+    ''' <summary>Mode "--html2pdf &lt;folder&gt;": jalankan HTML to PDF untuk folder ini lalu tutup.</summary>
+    Public Property HtmlFolder As String
+
     ''' <summary>Kalau diisi, semua baris log juga ditulis ke file ini (dipakai mode CLI yang tidak punya console).</summary>
     Public Property LogFile As String
 
@@ -29,7 +32,47 @@ Public Class Form1
             Dim ok = Await GenerateRiplayAsync(RiplayPdf)
             Environment.Exit(If(ok, 0, 1))
         End If
+        If Not String.IsNullOrEmpty(HtmlFolder) Then
+            Dim ok = Await HtmlToPdfAsync(HtmlFolder)
+            Environment.Exit(If(ok, 0, 1))
+        End If
     End Sub
+
+    ' ---------- HTML to PDF: folder HTML (hasil langkah 2, boleh diedit) → data.js → AllBody → AllPages → AllPages.pdf ----------
+    Private Async Sub btnHtmlToPdf_Click(sender As Object, e As EventArgs) Handles btnHtmlToPdf.Click
+        Dim start = If(outputDir IsNot Nothing AndAlso Directory.Exists(outputDir), outputDir,
+                       If(txtPdf.Text <> "", Path.Combine(Path.GetDirectoryName(txtPdf.Text), GlobalSettings.OutputFolder), ""))
+        Using dlg As New FolderBrowserDialog With {
+            .Description = "Pilih folder berisi header.html, footer.html, Page1..N.html, page.css (hasil Generate Riplay, boleh sudah diedit)",
+            .UseDescriptionForTitle = True,
+            .InitialDirectory = start
+        }
+            If dlg.ShowDialog(Me) <> DialogResult.OK Then Return
+            Await HtmlToPdfAsync(dlg.SelectedPath)
+        End Using
+    End Sub
+
+    Private Async Function HtmlToPdfAsync(folder As String) As Task(Of Boolean)
+        txtLog.Clear()
+        SetBusy(True)
+        Log($"HTML to PDF: {folder}")
+        Try
+            Dim dir = Await RiplayGenerator.FromHtmlAsync(folder, web, AddressOf LogSafe)
+            outputDir = dir
+            btnOpenOutput.Enabled = True
+            Log("")
+            Log("Hasil akhir: AllPages.pdf (dan AllPages.html); AllBody.html = semua body sudah berisi data.")
+            Return True
+        Catch ex As Exception
+            Log("ERROR: " & ex.Message)
+            If String.IsNullOrEmpty(HtmlFolder) Then
+                MessageBox.Show(Me, ex.Message, "Gagal HTML to PDF", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            End If
+            Return False
+        Finally
+            SetBusy(False)
+        End Try
+    End Function
 
     ' ---------- Generate Riplay: PDF → HTML + data → AllBody.html → AllPages.html (lihat RiplayGenerator.vb) ----------
     Private Async Sub btnGenerateRiplay_Click(sender As Object, e As EventArgs) Handles btnGenerateRiplay.Click
@@ -167,6 +210,7 @@ Public Class Form1
         btnBrowse.Enabled = Not busy
         btnGeneratePdf.Enabled = Not busy
         btnGenerateRiplay.Enabled = Not busy
+        btnHtmlToPdf.Enabled = Not busy
         btnGenerate.Enabled = Not busy AndAlso txtPdf.Text <> ""
     End Sub
 

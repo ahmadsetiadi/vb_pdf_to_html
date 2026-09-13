@@ -96,31 +96,40 @@ Public Class SemanticHtmlWriter
         ' Langkah 2 = HTML statis persis seperti PDF: directive <<...>> tetap teks merah, tanpa bind.js/data.js.
         ' Directive dijalankan di Generate Riplay langkah 4 (DirectiveProcessor.Execute) saat digabung ke AllBody.html.
 
-        Dim all As New StringBuilder()
-        all.AppendLine(HtmlHead("All Pages"))
+        ' PageN.html = BODY SAJA (tanpa header/footer) + link page.css, mulai HeaderBodyGapMm dari atas;
+        ' margin-top blok pertama dibuang. Inilah file body per halaman (tidak ada bodyN.html terpisah).
         For i = 0 To pages.Count - 1
             Dim n = i + 1
             Dim bodyHtml = RenderBody(split.Bodies(i))               ' directive dibiarkan apa adanya
-            Dim bp = Path.Combine(outDir, String.Format(GlobalSettings.BodyFilePattern, n))
-            File.WriteAllText(bp, bodyHtml, Utf8NoBom) : written.Add(bp)
-
-            Dim pageNo = If(split.PageNumberTexts(i), "")
-            Dim pageDiv = "<div class=""page"">" & vbLf & headerHtml & vbLf & bodyHtml & vbLf &
-                          footerHtml.Replace("{{PAGE}}", WebUtility.HtmlEncode(pageNo)) & vbLf & "</div>"
             Dim pp = Path.Combine(outDir, $"Page{n}.html")
-            File.WriteAllText(pp, HtmlHead($"Page {n}") & vbLf & pageDiv & vbLf & HtmlTail(), Utf8NoBom)
+            File.WriteAllText(pp, HtmlHead($"Page {n}", BodyOnlyCss()) & vbLf & "<div class=""page"">" & vbLf & bodyHtml & vbLf & "</div>" & vbLf & HtmlTail(), Utf8NoBom)
             written.Add(pp)
-            all.AppendLine(pageDiv)
         Next
-        all.AppendLine(HtmlTail())
-        Dim ap = Path.Combine(outDir, "AllPages.html")
-        File.WriteAllText(ap, all.ToString(), Utf8NoBom) : written.Add(ap)
         Return written
     End Function
 
-    Private Function HtmlHead(title As String) As String
+    Private Function HtmlHead(title As String, Optional extraCss As String = "") As String
         Return "<!DOCTYPE html>" & vbLf & "<html><head><meta charset=""utf-8""><title>" & WebUtility.HtmlEncode(title) &
-               "</title><link rel=""stylesheet"" href=""" & GlobalSettings.CssFileName & """></head><body>"
+               "</title><link rel=""stylesheet"" href=""" & GlobalSettings.CssFileName & """>" &
+               If(extraCss <> "", "<style>" & extraCss & "</style>", "") & "</head><body>"
+    End Function
+
+    ''' <summary>
+    ''' CSS preview PageN.html: hanya body — tinggi mengikuti isi, mulai HeaderBodyGapMm dari atas.
+    ''' margin-top blok pertama (berlapis: flow > bar, ol > li, cols > col > bar, juga kolom ke-2) dibuang,
+    ''' sama seperti yang dilakukan paginate.js (trimTop) di AllPages.
+    ''' </summary>
+    Private Function BodyOnlyCss() As String
+        Dim sels As New List(Of String)
+        Dim chain = ".bdy"
+        For lvl = 1 To 8
+            chain &= ">:first-child"
+            sels.Add(chain)
+            sels.Add(chain.Substring(0, chain.Length - ">:first-child".Length) & ">.col>:first-child")
+        Next
+        Return ".page{height:auto;min-height:0;overflow:visible}" &
+               Fmt(".bdy{{position:relative;top:0!important;height:auto!important;padding-top:{0}mm}}", R2(GlobalSettings.HeaderBodyGapMm)) &
+               String.Join(",", sels) & "{margin-top:0!important}"
     End Function
 
     Private Function HtmlTail() As String
