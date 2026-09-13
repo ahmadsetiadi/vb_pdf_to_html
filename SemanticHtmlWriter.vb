@@ -93,31 +93,20 @@ Public Class SemanticHtmlWriter
         File.WriteAllText(hp, headerHtml, Utf8NoBom) : written.Add(hp)
         File.WriteAllText(fp, footerHtml, Utf8NoBom) : written.Add(fp)
 
-        ' bind.js (applyData) disalin ke output; data.js contoh dibuat sekali (edit oleh user, tidak ditimpa)
-        Dim bindSrc = Path.Combine(AppContext.BaseDirectory, "bind.js")
-        If File.Exists(bindSrc) Then
-            Dim bindDst = Path.Combine(outDir, "bind.js")
-            File.Copy(bindSrc, bindDst, True) : written.Add(bindDst)
-        End If
-        Dim dataJs = Path.Combine(outDir, "data.js")
-        If Not File.Exists(dataJs) Then
-            File.WriteAllText(dataJs, SampleDataJs(), Utf8NoBom) : written.Add(dataJs)
-        End If
+        ' Langkah 2 = HTML statis persis seperti PDF: directive <<...>> tetap teks merah, tanpa bind.js/data.js.
+        ' Directive dijalankan di Generate Riplay langkah 4 (DirectiveProcessor.Execute) saat digabung ke AllBody.html.
 
         Dim all As New StringBuilder()
         all.AppendLine(HtmlHead("All Pages"))
         For i = 0 To pages.Count - 1
             Dim n = i + 1
-            Dim bodyHtml = DirectiveProcessor.Apply(RenderBody(split.Bodies(i)), log)
+            Dim bodyHtml = RenderBody(split.Bodies(i))               ' directive dibiarkan apa adanya
             Dim bp = Path.Combine(outDir, String.Format(GlobalSettings.BodyFilePattern, n))
             File.WriteAllText(bp, bodyHtml, Utf8NoBom) : written.Add(bp)
 
             Dim pageNo = If(split.PageNumberTexts(i), "")
-            ' preview PageN.html: {{PAGE}} = nomor asli di PDF; <<page>>/<<totalpages>> (template) = n / jumlah halaman
-            Dim ftrN = Regex.Replace(footerHtml.Replace("{{PAGE}}", WebUtility.HtmlEncode(pageNo)),
-                                     "&lt;&lt;\s*page\s*&gt;&gt;", n.ToString(), RegexOptions.IgnoreCase)
-            ftrN = Regex.Replace(ftrN, "&lt;&lt;\s*totalpages\s*&gt;&gt;", pages.Count.ToString(), RegexOptions.IgnoreCase)
-            Dim pageDiv = "<div class=""page"">" & vbLf & headerHtml & vbLf & bodyHtml & vbLf & ftrN & vbLf & "</div>"
+            Dim pageDiv = "<div class=""page"">" & vbLf & headerHtml & vbLf & bodyHtml & vbLf &
+                          footerHtml.Replace("{{PAGE}}", WebUtility.HtmlEncode(pageNo)) & vbLf & "</div>"
             Dim pp = Path.Combine(outDir, $"Page{n}.html")
             File.WriteAllText(pp, HtmlHead($"Page {n}") & vbLf & pageDiv & vbLf & HtmlTail(), Utf8NoBom)
             written.Add(pp)
@@ -131,27 +120,11 @@ Public Class SemanticHtmlWriter
 
     Private Function HtmlHead(title As String) As String
         Return "<!DOCTYPE html>" & vbLf & "<html><head><meta charset=""utf-8""><title>" & WebUtility.HtmlEncode(title) &
-               "</title><link rel=""stylesheet"" href=""" & GlobalSettings.CssFileName & """>" &
-               "<script src=""bind.js""></script></head><body>"
+               "</title><link rel=""stylesheet"" href=""" & GlobalSettings.CssFileName & """></head><body>"
     End Function
 
-    ''' <summary>Akhir dokumen preview: muat data.js (kalau ada) lalu terapkan ke blok [data-if].</summary>
     Private Function HtmlTail() As String
-        Return "<script src=""data.js""></script>" & vbLf &
-               "<script>applyData(window.riplayData === undefined ? null : window.riplayData);</script>" & vbLf &
-               "</body></html>"
-    End Function
-
-    ''' <summary>data.js contoh untuk preview PageN.html di browser (dibuat hanya kalau belum ada).</summary>
-    Private Function SampleDataJs() As String
-        Dim sb As New StringBuilder()
-        sb.AppendLine("// data.js — data contoh untuk preview PageN.html / AllPages.html di browser.")
-        sb.AppendLine("// Dipakai juga oleh Generate PDF (--assemble) kalau VB tidak mengirim Data sendiri.")
-        sb.AppendLine("// null  = mode template: semua blok kondisional <<if …>> ditampilkan.")
-        sb.AppendLine("// Contoh: window.riplayData = { riders: [""FEC"", ""SOC""] };   → blok if riders.contains('FEC') tampil")
-        sb.AppendLine("//         window.riplayData = { riders: [] };               → blok itu disembunyikan")
-        sb.AppendLine("window.riplayData = null;")
-        Return sb.ToString()
+        Return "</body></html>"
     End Function
 
     Private Function BuildCss() As String

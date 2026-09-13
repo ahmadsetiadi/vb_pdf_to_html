@@ -4,10 +4,10 @@
 '  Build()  : susun semua variabel di satu Dictionary (key = nama variabel yang ditulis di PDF).
 '  Write()  : tulis Dictionary itu ke SATU file  Output\<nama>\data.js  berisi
 '                 window.riplayData = { ...JSON rapi... };
-'             File ini yang dimuat semua HTML (PageN.html, AllBody.html, dokumen kerja PageAssembler)
-'             lewat <script src="data.js"> → bind.js (applyData) menerapkannya ke <<if …>> dan <<array.field>>.
-'             Dipakai .js (bukan .json) karena browser menolak fetch() file JSON lokal (file://);
-'             isinya tetap JSON murni di kanan tanda "=" sehingga mudah dibaca / diedit / dipakai program lain.
+'             Isinya JSON murni di kanan tanda "=" (mudah dibaca / diedit / dipakai program lain).
+'  Read()   : baca kembali file itu (dipakai PageAssembler / --assemble bila Data tidak diberikan).
+'  Directive di HTML (<<if>>, <<arr.field>>, <<var>>) dijalankan di VB oleh DirectiveProcessor.Execute
+'  dengan data ini (Generate Riplay langkah 4–5) → AllBody.html / AllPages.html statis tanpa <<…>>.
 '
 '  Ganti isi Build() dengan data dari aplikasi; HTML tidak perlu diubah.
 ' =====================================================================
@@ -15,7 +15,6 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.Encodings.Web
 Imports System.Text.Json
-Imports System.Text.RegularExpressions
 
 Public Class RiplayData
 
@@ -54,65 +53,6 @@ Public Class RiplayData
             {"footer", footer}
         }
     End Function
-
-    ' ---------------------------------------------------------------------------------
-    '  Pencocokan otomatis variabel HTML <-> data
-    ' ---------------------------------------------------------------------------------
-    ''' <summary>Placeholder &lt;&lt;nama&gt;&gt; / &lt;&lt;obj.field&gt;&gt; di HTML (bentuk ter-escape &amp;lt;&amp;lt;...&amp;gt;&amp;gt; maupun mentah).</summary>
-    Private Shared ReadOnly PlaceholderRx As New Regex("(?:<<|&lt;&lt;)\s*([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*(?:>>|&gt;&gt;)")
-    ''' <summary>Placeholder yang diisi paginate.js (nomor halaman), bukan data.</summary>
-    Private Shared ReadOnly PageVars As String() = {"page", "pageno", "totalpages", "total", "pages"}
-
-    ''' <summary>
-    ''' Cari semua &lt;&lt;variabel&gt;&gt; di header.html, footer.html, body*.html lalu cocokkan dengan data:
-    ''' ada -> diganti bind.js saat halaman dibuka / dipecah; tidak ada -> dibiarkan (tetap merah).
-    ''' Mengembalikan daftar path yang tidak ada di data.
-    ''' </summary>
-    Public Shared Function ScanPlaceholders(outDir As String, data As IDictionary(Of String, Object), log As Action(Of String)) As List(Of String)
-        Dim files = New List(Of String) From {IO.Path.Combine(outDir, GlobalSettings.HeaderFileName), IO.Path.Combine(outDir, GlobalSettings.FooterFileName)}
-        files.AddRange(Directory.GetFiles(outDir, "body*.html").OrderBy(Function(f) f, StringComparer.OrdinalIgnoreCase))
-        Dim found As New SortedDictionary(Of String, SortedSet(Of String))(StringComparer.Ordinal)
-        For Each f In files
-            If Not File.Exists(f) Then Continue For
-            For Each m As Match In PlaceholderRx.Matches(File.ReadAllText(f, Encoding.UTF8))
-                Dim key = m.Groups(1).Value
-                If Not found.ContainsKey(key) Then found(key) = New SortedSet(Of String)(StringComparer.OrdinalIgnoreCase)
-                found(key).Add(IO.Path.GetFileName(f))
-            Next
-        Next
-        Dim json = JsonSerializer.SerializeToElement(data)
-        Dim missing As New List(Of String)
-        For Each kv In found
-            Dim status As String
-            If PageVars.Contains(kv.Key.ToLowerInvariant()) Then
-                status = "nomor halaman (diisi paginate.js)"
-            Else
-                Dim v = Resolve(json, kv.Key)
-                If Not v.HasValue Then
-                    status = "TIDAK ADA di data.js -> dibiarkan" : missing.Add(kv.Key)
-                ElseIf v.Value.ValueKind = JsonValueKind.Array OrElse v.Value.ValueKind = JsonValueKind.Object Then
-                    status = "array/objek -> hanya untuk <<if>> / baris tabel, bukan teks"
-                Else
-                    status = "= " & v.Value.ToString()
-                End If
-            End If
-            log($"  <<{kv.Key}>> [{String.Join(", ", kv.Value)}] {status}")
-        Next
-        If found.Count = 0 Then log("  (tidak ada <<variabel>> di HTML)")
-        Return missing
-    End Function
-
-    Private Shared Function Resolve(root As JsonElement, path As String) As JsonElement?
-        Dim cur = root
-        For Each seg In path.Split("."c)
-            If cur.ValueKind <> JsonValueKind.Object Then Return Nothing
-            Dim nxt As JsonElement
-            If Not cur.TryGetProperty(seg, nxt) Then Return Nothing
-            cur = nxt
-        Next
-        Return cur
-    End Function
-
 
     ''' <summary>JSON rapi (indent) dari data.</summary>
     Public Shared Function ToJson(data As IDictionary(Of String, Object)) As String

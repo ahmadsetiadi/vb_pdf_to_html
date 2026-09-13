@@ -20,9 +20,9 @@ Public Class PageAssembler
     Public Property OutputFile As String = "AllPages.html"
 
     ''' <summary>
-    ''' Data dari VB untuk template, mis. {"riders": {"FEC","SOC"}} → di HTML dievaluasi oleh bind.js
-    ''' (blok &lt;&lt;if riders.contains('FEC')&gt;&gt; tampil/hilang). Key = nama variabel di PDF,
-    ''' value = String / Double / Boolean / String() / List / Dictionary (diserialisasi ke JSON).
+    ''' Data dari VB untuk template, mis. {"riders": {"FEC","SOC"}, "footer": {...}}. Semua directive yang masih ada di
+    ''' header/footer/body (&lt;&lt;if&gt;&gt;, &lt;&lt;arr.field&gt;&gt;, &lt;&lt;var&gt;&gt;) dijalankan di VB
+    ''' (DirectiveProcessor.Execute) sebelum dipecah; &lt;&lt;page&gt;&gt;/&lt;&lt;totalpages&gt;&gt; diisi paginate.js.
     ''' Nothing = pakai data.js di folder kalau ada; kalau tidak ada → mode template (semua blok tampil).
     ''' </summary>
     Public Property Data As IDictionary(Of String, Object)
@@ -35,19 +35,25 @@ Public Class PageAssembler
         Dim ftr = ReadBody(Path.Combine(folder, FooterFile))
         Dim bdy = ReadBody(Path.Combine(folder, BodyFile))
         log($"Baca {HeaderFile}, {FooterFile}, {BodyFile}")
-        ' penanda <<if …>> yang masih berupa teks (mis. Page1.html diedit manual) → div.cond
-        bdy = DirectiveProcessor.Apply(bdy, log)
 
-        ' ---------- data untuk template ----------
-        Dim dataJson As String = Nothing
-        If Data IsNot Nothing Then
-            dataJson = JsonSerializer.Serialize(Data)
-            log("Data: " & dataJson)
+        ' ---------- data: properti Data, kalau tidak ada → data.js di folder ----------
+        Dim dataDict = Data
+        If dataDict Is Nothing Then
+            dataDict = RiplayData.Read(folder)
+            If dataDict IsNot Nothing Then log("Data: dari " & RiplayData.FileName)
         End If
-        Dim dataJsPath = Path.Combine(folder, "data.js")
-        Dim dataJs = If(Data Is Nothing AndAlso File.Exists(dataJsPath), File.ReadAllText(dataJsPath, Encoding.UTF8), "")
-        If dataJs <> "" Then log("Data: dari data.js")
-        If dataJson Is Nothing AndAlso dataJs = "" Then log("Data: tidak ada → mode template (semua blok kondisional tampil)")
+        If dataDict IsNot Nothing Then
+            ' semua directive yang masih tersisa (header/footer: <<var>>; body yang diedit manual: <<if>>, <<arr.field>>)
+            ' dijalankan di sini (VB). <<page>>/<<totalpages>> dibiarkan → diisi paginate.js per halaman.
+            Dim dataEl = JsonSerializer.SerializeToElement(dataDict)
+            hdr = DirectiveProcessor.Execute(hdr, dataEl, log)
+            ftr = DirectiveProcessor.Execute(ftr, dataEl, log)
+            bdy = DirectiveProcessor.Execute(bdy, dataEl, log)
+        Else
+            ' mode template: penanda <<if …>> → div.cond (bind.js menampilkan semua blok)
+            bdy = DirectiveProcessor.Apply(bdy, log)
+            log("Data: tidak ada → mode template (semua blok kondisional tampil, <<var>> dibiarkan)")
+        End If
 
         ' ---------- dokumen kerja: css + template + script ----------
         Dim js = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "paginate.js"), Encoding.UTF8)
@@ -61,8 +67,7 @@ Public Class PageAssembler
         work.AppendLine("<template id=""tplFooter"">" & ftr & "</template>")
         work.AppendLine("<template id=""tplBody"">" & bdy & "</template>")
         work.AppendLine("<div id=""pages""></div>")
-        If bind <> "" Then work.AppendLine("<script>" & bind & "</script>")
-        If dataJs <> "" Then work.AppendLine("<script>" & dataJs & "</script>")
+        If bind <> "" Then work.AppendLine("<script>" & bind & "</script>")   ' replacePlaceholders untuk <<page>>/<<totalpages>>
         work.AppendLine("<script>" & js & "</script>")
         work.AppendLine("</body></html>")
         Dim workPath = Path.Combine(folder, "_work.html")
@@ -89,8 +94,8 @@ Public Class PageAssembler
         ' ---------- jalankan pemecah ----------
         log("Mengukur & memecah halaman …")
         Dim inv = Globalization.CultureInfo.InvariantCulture
-        Dim call_ = String.Format(inv, "paginate({0}, {1}{2})", GlobalSettings.HeaderBodyGapMm, GlobalSettings.BodyFooterGapMm,
-                                  If(dataJson IsNot Nothing, ", " & dataJson, ""))
+        ' directive sudah dijalankan di VB → paginate() tanpa data (bind.js hanya mengisi <<page>>/<<totalpages>>)
+        Dim call_ = String.Format(inv, "paginate({0}, {1})", GlobalSettings.HeaderBodyGapMm, GlobalSettings.BodyFooterGapMm)
         log($"Jarak header→body {GlobalSettings.HeaderBodyGapMm} mm, body→footer {GlobalSettings.BodyFooterGapMm} mm")
         Dim raw = Await web.CoreWebView2.ExecuteScriptAsync(call_)
         If raw = "null" OrElse String.IsNullOrEmpty(raw) Then Throw New InvalidOperationException("paginate() tidak mengembalikan hasil (lihat _work.html di browser untuk error)")
