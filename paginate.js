@@ -135,6 +135,7 @@ function paginate(gapTopMm, gapBottomMm, data) {
     }
     if (src.matches('.col')) sh.style.height = '100%';  // kolom setinggi blok cols
     parentShell().appendChild(sh);
+    trimTop(sh);                                        // di puncak halaman: tanpa margin-top (jarak ke header = gap)
     if (src.matches('.cols')) {                         // cols mengisi sisa ruang halaman
       const top = sh.getBoundingClientRect().top;
       sh.style.height = ((limit() - 0.5 - top) / PX_PER_MM).toFixed(2) + 'mm';
@@ -158,7 +159,20 @@ function paginate(gapTopMm, gapBottomMm, data) {
     srcs.forEach((s, i) => openShell(s, firstFlags[i] === true));
   }
 
-  function placed(c, src) { c.dataset.placed = '1'; pagePlaced[curIdx].push({ src, clone: c }); }
+  function placed(c, src) { c.dataset.placed = '1'; pagePlaced[curIdx].push({ src, clone: c }); trimTop(c); }
+
+  // ---------- puncak halaman ----------
+  // Blok pertama di tiap halaman (dan shell/ancestor-nya) tidak boleh punya margin-top: jarak ke kotak header
+  // = gapTopMm saja. Diperiksa geometris (tepi atas dikurangi margin = tepi atas area body) sehingga kolom kedua
+  // dalam .cols dan blok setelah page break ikut rata.
+  const mtOf = el => parseFloat(getComputedStyle(el).marginTop) || 0;
+  function trimTop(el) {
+    const top = cur.getBoundingClientRect().top + 0.5;
+    const atTop = e => { const m = mtOf(e); return m > 0 && e.getBoundingClientRect().top - m <= top; };
+    for (let e = el; e && e !== cur; e = e.parentElement) if (atTop(e)) e.style.marginTop = '0';
+    // blok yang ditaruh utuh: anak pertama berlapis (flow > bar, ol > li, cols > col > bar) juga di puncak
+    for (let e = el.firstElementChild; e; e = e.firstElementChild) if (atTop(e)) e.style.marginTop = '0';
+  }
 
   // ---------- judul yatim (keep-with-next) ----------
   // Urutan blok yang sudah ditaruh per halaman: {src, clone}. Saat harus pindah halaman, deretan judul
@@ -181,8 +195,21 @@ function paginate(gapTopMm, gapBottomMm, data) {
     const list = pagePlaced[curIdx] || [];
     let i = list.length;
     while (i > 0 && isHeading(list[i - 1].src)) i--;
-    if (i === list.length || i === 0) return [];          // tidak ada judul di dasar / halaman hanya berisi judul
-    return list.slice(i);
+    if (i === 0) return [];                               // halaman hanya berisi judul → biarkan
+    const res = list.slice(i);
+    // judul di EKOR blok yang ditaruh utuh (mis. <li>… <p class="sub">Catatan:</p></li>): dipisah dan ikut dibawa
+    if (i > 0) {
+      const it = list[i - 1];
+      let c = it.clone, sSrc = it.src, tail = null;
+      while (c && c.lastElementChild) {
+        c = c.lastElementChild; sSrc = sSrc && sSrc.lastElementChild;
+        if (!sSrc) break;
+        if (isHeading(c)) { tail = { src: sSrc, clone: c, tail: true }; break; }
+        if (c.matches('table, .cols') || c.textContent.trim() === '') break;
+      }
+      if (tail && tail.clone !== it.clone) res.unshift(tail);
+    }
+    return res;
   }
   // shell untuk src (tanpa mendaftarkannya ke rantai aktif)
   function makeShell(src, first) {
@@ -203,10 +230,12 @@ function paginate(gapTopMm, gapBottomMm, data) {
   function removeCarried(items) {
     const list = pagePlaced[curIdx];
     for (const it of items) {
-      list.splice(list.indexOf(it), 1);
+      const k = list.indexOf(it);
+      if (k >= 0) list.splice(k, 1);
       let el = it.clone.parentElement;
       it.clone.remove();
-      while (el && el !== cur && !el.matches('.cols') && !el.querySelector('[data-placed]')) {
+      if (it.tail) continue;                                // ekor blok: induknya tetap (masih berisi teks lain)
+      while (el && el !== cur && !el.matches('.cols') && !el.hasAttribute('data-placed') && !el.querySelector('[data-placed]')) {
         const p = el.parentElement; el.remove(); el = p;
       }
     }
@@ -218,7 +247,7 @@ function paginate(gapTopMm, gapBottomMm, data) {
       const chain = [];                                     // ancestor antara src dan shell yang sudah ada
       let a = it.src.parentElement, parentSh = null, nextSh = null;
       while (a) {
-        if (a === bdySrc) { parentSh = cur; break; }
+        if (a === bdySrc) { parentSh = cur; nextSh = shells[0] || null; break; }   // sebelum rantai shell yang sedang aktif
         if (made.has(a)) { parentSh = made.get(a); break; }
         const pi = path.indexOf(a);
         if (pi >= 0) { parentSh = shells[pi]; nextSh = shells[pi + 1] || null; break; }
@@ -226,7 +255,7 @@ function paginate(gapTopMm, gapBottomMm, data) {
       }
       if (!parentSh) continue;
       for (const anc of chain) {
-        const sh = makeShell(anc, true);
+        const sh = makeShell(anc, !it.tail);                // ekor blok = lanjutan (marker kosong, tanpa margin)
         if (anc === chain[0]) sh.style.marginTop = '0';
         parentSh.insertBefore(sh, nextSh); made.set(anc, sh);
         parentSh = sh; nextSh = null;

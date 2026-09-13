@@ -38,8 +38,8 @@ Public Module GlobalSettings
     Public CssFileName As String = "page.css"
 
     ' ---------- Fase 2: jarak saat menyatukan halaman (Generate PDF) ----------
-    Public HeaderBodyGapMm As Double = 0       ' jarak border bawah kotak header → awal body
-    Public BodyFooterGapMm As Double = 0       ' jarak akhir body → border atas kotak footer
+    Public HeaderBodyGapMm As Double = 2       ' jarak border bawah kotak header → teks pertama body (margin-top blok pertama tiap halaman dibuang)
+    Public BodyFooterGapMm As Double = 2       ' jarak minimum teks terakhir body → border atas kotak footer
     Public BreakBetweenSourcePages As Boolean = False  ' Generate Riplay: False = isi mengalir antar halaman sumber (halaman baru hanya di <<Page Break>>); True = tiap bodyN.html mulai di halaman baru
 
     ' ---------- Fallback pemisah region (dipakai jika kotak header/footer tidak terdeteksi) ----------
