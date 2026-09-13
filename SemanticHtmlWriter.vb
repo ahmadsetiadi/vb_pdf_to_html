@@ -113,8 +113,11 @@ Public Class SemanticHtmlWriter
             File.WriteAllText(bp, bodyHtml, Utf8NoBom) : written.Add(bp)
 
             Dim pageNo = If(split.PageNumberTexts(i), "")
-            Dim pageDiv = "<div class=""page"">" & vbLf & headerHtml & vbLf & bodyHtml & vbLf &
-                          footerHtml.Replace("{{PAGE}}", WebUtility.HtmlEncode(pageNo)) & vbLf & "</div>"
+            ' preview PageN.html: {{PAGE}} = nomor asli di PDF; <<page>>/<<totalpages>> (template) = n / jumlah halaman
+            Dim ftrN = Regex.Replace(footerHtml.Replace("{{PAGE}}", WebUtility.HtmlEncode(pageNo)),
+                                     "&lt;&lt;\s*page\s*&gt;&gt;", n.ToString(), RegexOptions.IgnoreCase)
+            ftrN = Regex.Replace(ftrN, "&lt;&lt;\s*totalpages\s*&gt;&gt;", pages.Count.ToString(), RegexOptions.IgnoreCase)
+            Dim pageDiv = "<div class=""page"">" & vbLf & headerHtml & vbLf & bodyHtml & vbLf & ftrN & vbLf & "</div>"
             Dim pp = Path.Combine(outDir, $"Page{n}.html")
             File.WriteAllText(pp, HtmlHead($"Page {n}") & vbLf & pageDiv & vbLf & HtmlTail(), Utf8NoBom)
             written.Add(pp)

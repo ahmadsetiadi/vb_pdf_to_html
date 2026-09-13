@@ -47,6 +47,9 @@ Public Class RegionSplitter
             res.Bodies.Add(Cut(p, $"body{p.Number}", res.HeaderBottomMm, res.FooterTopMm))
         Next
 
+        ' ---------- teks isi yang meluber ke pita footer (template kepanjangan) → kembalikan ke body ----------
+        If pages.Count >= 2 Then RescueOverflow(pages, res, log)
+
         ' ---------- nomor halaman → placeholder {{PAGE}} ----------
         DetectPageNumber(pages, res, log)
 
@@ -72,6 +75,43 @@ Public Class RegionSplitter
         Next
 
         Return r
+    End Function
+
+    ' Footer = teks yang berulang di posisi yang sama pada halaman lain. Run di pita footer yang
+    ' tidak punya padanan di halaman mana pun (teks & posisi sama; angka boleh beda = nomor halaman)
+    ' adalah isi body yang meluber ke bawah → dipindah ke body halaman itu (posisi y tetap, di bawah
+    ' isi lain) supaya paragraf / <<endif>> tidak hilang dan mengalir ke halaman berikut saat dipecah.
+    Private Sub RescueOverflow(pages As List(Of PageModel), res As SplitResult, log As Action(Of String))
+        Dim footers = pages.Select(Function(p) Cut(p, "f", res.FooterTopMm, p.HeightMm)).ToList()
+        ' teks per baris (baseline) tiap halaman, spasi dibuang — run boleh terpecah beda antar halaman ("Pemasar :" vs "Pemasar", ":")
+        Dim lines = footers.Select(Function(f) f.Runs.GroupBy(Function(r) Math.Round(r.BaselineMm * 2) / 2).
+                                       Select(Function(g) Tuple.Create(g.Key, String.Concat(g.OrderBy(Function(r) r.XMm).Select(Function(r) Squash(r.Text))))).ToList()).ToList()
+        For pi = 0 To pages.Count - 1
+            Dim moved As New List(Of String)
+            For Each r In footers(pi).Runs
+                Dim rr = r
+                Dim key = Squash(rr.Text)
+                Dim isNum = Regex.IsMatch(key, "^\d+$")
+                Dim repeated = False
+                For pj = 0 To pages.Count - 1
+                    If pj = pi Then Continue For
+                    If lines(pj).Any(Function(t) Math.Abs(t.Item1 - rr.BaselineMm) < 0.75 AndAlso (isNum OrElse key = "" OrElse t.Item2.Contains(key))) Then repeated = True : Exit For
+                Next
+                If repeated Then Continue For
+                ' → body: koordinat relatif ke atas body
+                Dim c = Clone(rr, 0)
+                c.BaselineMm = rr.BaselineMm + res.FooterTopMm - res.HeaderBottomMm
+                res.Bodies(pi).Runs.Add(c)
+                moved.Add(rr.Text)
+                If pi = 0 Then res.Footer.Runs.RemoveAll(Function(x) Math.Abs(x.BaselineMm - rr.BaselineMm) < 0.05 AndAlso Math.Abs(x.XMm - rr.XMm) < 0.05)
+            Next
+            If moved.Count > 0 Then log($"Halaman {pages(pi).Number}: {moved.Count} baris di area footer bukan bagian footer → ikut body: " &
+                                        String.Join(" | ", moved.Select(Function(t) If(t.Length > 40, t.Substring(0, 40) & "…", t))))
+        Next
+    End Sub
+
+    Private Shared Function Squash(t As String) As String
+        Return Regex.Replace(t, "\s+", "")
     End Function
 
     ' Cari run di footer yang teksnya beda antar halaman (mis. "6" vs "9") → {{PAGE}}

@@ -59,7 +59,6 @@ function paginate(gapTopMm, gapBottomMm, data) {
   const path = [];           // ancestor sumber yang sedang "terbuka"
   let shells = [];           // shell untuk tiap ancestor di halaman aktif
   const shellMap = new Map();// src → { pageIdx: shell }  (untuk cari shell di halaman tertentu)
-  let lastPlaced = null, lastPlacedSrc = null;
 
   const SPLITTABLE = 'div.flow, div.cond, ol.lst, li, div.b, table.tbl, tbody';
   const KEEP_WITH_NEXT = 'p.sub, .bar';
@@ -80,7 +79,7 @@ function paginate(gapTopMm, gapBottomMm, data) {
     pages.push(b);
     gotoPage(pages.length - 1);
   }
-  function gotoPage(i) { cur = pages[i]; curIdx = i; lastPlaced = null; lastPlacedSrc = null; }
+  function gotoPage(i) { cur = pages[i]; curIdx = i; if (!pagePlaced[i]) pagePlaced[i] = []; }
   function nextPage() { if (curIdx + 1 < pages.length) gotoPage(curIdx + 1); else newPage(); }
 
   const limit = () => cur.getBoundingClientRect().bottom + 0.5;          // batas bawah area body (px)
@@ -159,7 +158,92 @@ function paginate(gapTopMm, gapBottomMm, data) {
     srcs.forEach((s, i) => openShell(s, firstFlags[i] === true));
   }
 
-  function placed(c, src) { c.dataset.placed = '1'; lastPlaced = c; lastPlacedSrc = src; }
+  function placed(c, src) { c.dataset.placed = '1'; pagePlaced[curIdx].push({ src, clone: c }); }
+
+  // ---------- judul yatim (keep-with-next) ----------
+  // Urutan blok yang sudah ditaruh per halaman: {src, clone}. Saat harus pindah halaman, deretan judul
+  // di dasar halaman (p.sub, .bar, baris <th> tabel) ikut dipindah ke atas halaman baru bersama blok berikutnya.
+  const pagePlaced = [];
+  const isHeadRow = n => n.tagName === 'TR' && n.children.length > 0 && Array.from(n.children).every(c => c.tagName === 'TH');
+  // judul: p.sub / .bar / baris th, atau blok utuh yang seluruh teksnya judul (mis. <ol><li>I. <p class="sub">…) 
+  function isHeading(n) {
+    if (n.matches(KEEP_WITH_NEXT) || isHeadRow(n)) return true;
+    if (n.matches('table, .cols, .page-break') || !n.querySelector(KEEP_WITH_NEXT)) return false;
+    const w = document.createTreeWalker(n, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode(); t; t = w.nextNode()) {
+      if (!t.nodeValue.trim()) continue;
+      const p = t.parentElement;
+      if (!p.closest(KEEP_WITH_NEXT) && !p.closest('.m')) return false;
+    }
+    return true;
+  }
+  function trailingHeadings() {
+    const list = pagePlaced[curIdx] || [];
+    let i = list.length;
+    while (i > 0 && isHeading(list[i - 1].src)) i--;
+    if (i === list.length || i === 0) return [];          // tidak ada judul di dasar / halaman hanya berisi judul
+    return list.slice(i);
+  }
+  // shell untuk src (tanpa mendaftarkannya ke rantai aktif)
+  function makeShell(src, first) {
+    const sh = src.cloneNode(false);
+    if (!first) sh.style.marginTop = '0';
+    if (src.tagName === 'LI') {
+      const m = src.querySelector(':scope > .m');
+      if (m) { const mc = m.cloneNode(first); if (!first) mc.innerHTML = '&nbsp;'; sh.appendChild(mc); }
+    }
+    if (src.tagName === 'TABLE') {
+      const cg = src.querySelector(':scope > colgroup');
+      if (cg) sh.appendChild(cg.cloneNode(true));
+    }
+    if (src.matches('.col')) sh.style.height = '100%';
+    return sh;
+  }
+  // buang judul dari halaman lama; shell yang jadi kosong ikut dibuang (kecuali .cols, dipakai kolom lain)
+  function removeCarried(items) {
+    const list = pagePlaced[curIdx];
+    for (const it of items) {
+      list.splice(list.indexOf(it), 1);
+      let el = it.clone.parentElement;
+      it.clone.remove();
+      while (el && el !== cur && !el.matches('.cols') && !el.querySelector('[data-placed]')) {
+        const p = el.parentElement; el.remove(); el = p;
+      }
+    }
+  }
+  // taruh kembali judul di halaman baru, di bawah shell ancestor yang benar (dibuat ulang bila perlu)
+  function placeCarried(items) {
+    const made = new Map();                                 // src ancestor → shell baru di halaman ini
+    for (const it of items) {
+      const chain = [];                                     // ancestor antara src dan shell yang sudah ada
+      let a = it.src.parentElement, parentSh = null, nextSh = null;
+      while (a) {
+        if (a === bdySrc) { parentSh = cur; break; }
+        if (made.has(a)) { parentSh = made.get(a); break; }
+        const pi = path.indexOf(a);
+        if (pi >= 0) { parentSh = shells[pi]; nextSh = shells[pi + 1] || null; break; }
+        chain.unshift(a); a = a.parentElement;
+      }
+      if (!parentSh) continue;
+      for (const anc of chain) {
+        const sh = makeShell(anc, true);
+        if (anc === chain[0]) sh.style.marginTop = '0';
+        parentSh.insertBefore(sh, nextSh); made.set(anc, sh);
+        parentSh = sh; nextSh = null;
+      }
+      const k = it.src.cloneNode(true);
+      if (!chain.length) k.style.marginTop = '0';
+      parentSh.insertBefore(k, nextSh);
+      placed(k, it.src);
+    }
+  }
+  // pindah halaman; judul di dasar halaman lama dibawa serta
+  function breakPageCarry() {
+    const carry = trailingHeadings();
+    if (carry.length) removeCarried(carry);
+    breakPage();
+    if (carry.length) placeCarried(carry);
+  }
 
   // ---------- page break manual ----------
   //   <div class="page-break"></div>                → pindah halaman di titik ini (elemen tidak ikut dicetak)
@@ -203,14 +287,8 @@ function paginate(gapTopMm, gapBottomMm, data) {
     // atomik: halaman masih kosong → taruh saja (blok lebih tinggi dari halaman)
     if (placedCount() === 0) { parentShell().appendChild(c); placed(c, node); return; }
 
-    // judul di dasar halaman ikut pindah bersama blok berikutnya
-    let carry = null;
-    if (lastPlaced && lastPlacedSrc && lastPlacedSrc.matches(KEEP_WITH_NEXT) &&
-        lastPlacedSrc.parentElement === node.parentElement && placedCount() > 1) {
-      lastPlaced.remove(); carry = lastPlacedSrc;
-    }
-    breakPage();
-    if (carry) { const k = carry.cloneNode(true); k.style.marginTop = '0'; parentShell().appendChild(k); placed(k, carry); }
+    // judul di dasar halaman (p.sub / .bar / baris th) ikut pindah bersama blok ini
+    breakPageCarry();
     c = node.cloneNode(true);
     parentShell().appendChild(c);
     placed(c, node);
@@ -235,7 +313,7 @@ function paginate(gapTopMm, gapBottomMm, data) {
     probe.remove();
     if (placedCount() > 0 && (limit() - colsTop) < 25 * PX_PER_MM) breakPage();
 
-    const startIdx = curIdx;
+    let startIdx = curIdx;
     path.push(node);
     openShell(node, true);
     const base = shells.slice();
@@ -251,11 +329,18 @@ function paginate(gapTopMm, gapBottomMm, data) {
       if (curIdx > maxIdx) maxIdx = curIdx;
     }
 
-    // kolom yang isinya sudah habis tetap diberi kotak kosong di halaman berikutnya (border lanjut)
+    // semua kolom pindah dari halaman awal (judulnya yatim) → cols kosong di halaman awal dibuang
+    if (maxIdx > startIdx && isEmptyShell(shellMap.get(node)[startIdx])) {
+      shellMap.get(node)[startIdx].remove();
+      delete shellMap.get(node)[startIdx];
+      startIdx++;
+    }
+
+    // kolom yang isinya sudah habis / dipindah tetap diberi kotak kosong (border lanjut, posisi kolom lain tetap)
     for (let idx = startIdx; idx <= maxIdx; idx++) {
       const colsSh = shellMap.get(node)[idx];
       cols.forEach((col, ci) => {
-        if (shellMap.has(col) && shellMap.get(col)[idx]) return;
+        if (shellMap.has(col) && shellMap.get(col)[idx] && shellMap.get(col)[idx].isConnected) return;
         const sh = col.cloneNode(false);
         sh.style.height = '100%';
         if (idx > startIdx) sh.style.marginTop = '0';
@@ -288,14 +373,22 @@ function paginate(gapTopMm, gapBottomMm, data) {
   root.querySelectorAll('[data-placed]').forEach(e => delete e.dataset.placed);
   root.querySelectorAll('[hidden]').forEach(e => e.remove());
 
-  // nomor halaman
+  // nomor halaman: <<page>> / <<totalpages>> (template PDF), {{PAGE}} / {{TOTAL}}, atau "dari <b>N</b>"
   const total = pages.length;
   pages.forEach((b, i) => {
     const f = b.parentElement.querySelector('.ftr');
+    let done = 0;
+    if (typeof replacePlaceholders === 'function')
+      done = replacePlaceholders(f, path => {
+        const k = path.toLowerCase();
+        if (k === 'page' || k === 'pageno') return String(i + 1);
+        if (k === 'totalpages' || k === 'total' || k === 'pages') return String(total);
+        return undefined;
+      });
     let h = f.innerHTML.replace(/\{\{PAGE\}\}/g, String(i + 1));
     if (h.indexOf('{{TOTAL}}') >= 0) h = h.replace(/\{\{TOTAL\}\}/g, String(total));
-    else h = h.replace(/(dari\s*<b>)\d+(<\/b>)/, '$1' + total + '$2');
-    f.innerHTML = h;
+    else if (!done) h = h.replace(/(dari\s*<b>)\d+(<\/b>)/, '$1' + total + '$2');
+    if (h !== f.innerHTML) f.innerHTML = h;
   });
 
   return JSON.stringify({ pages: total, html: root.innerHTML });

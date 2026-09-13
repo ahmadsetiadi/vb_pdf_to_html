@@ -23,9 +23,44 @@
         kutip keriting → kutip lurus
         variabel tidak ada / error → false (dicatat di console)
 
+   3. Variabel biasa di mana saja (header, footer, body): <<nama>> atau <<obj.field>>
+      → diganti nilai dari data (resolvePath). Contoh: data.footer = {agentname:"Budi"} →
+      <<footer.agentname>> menjadi "Budi". Placeholder yang tidak ada di data dibiarkan apa adanya
+      (tetap merah = belum ada datanya). Kalau span pembungkusnya berwarna merah penanda (#E0241B),
+      warna itu dibuang supaya nilainya tampil normal. <<page>> / <<totalpages>> diisi paginate.js.
+      Semua otomatis: tambah key baru di data (RiplayData.Build di VB) → langsung dikenali di HTML.
+
    Elemen yang tidak aktif diberi atribut hidden (CSS: [hidden]{display:none});
    paginate.js melewati elemen hidden sehingga tidak masuk ke AllPages.html.
    ===================================================================== */
+const PLACEHOLDER_RX = /<<\s*([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*>>/g;
+const PLACEHOLDER_RED = /^(#e0241b|rgb\(224,\s*36,\s*27\))$/i;
+
+/* Ganti <<path>> di semua text node di bawah root. resolve(path) → string, atau undefined = biarkan.
+   Mengembalikan jumlah placeholder yang diganti. Dipakai applyData (data) dan paginate.js (nomor halaman). */
+function replacePlaceholders(root, resolve) {
+  let n = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: t => (t.nodeValue.indexOf('<<') >= 0 && !/^(SCRIPT|STYLE)$/.test(t.parentNode.nodeName))
+                     ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+  const nodes = [];
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) nodes.push(t);
+  for (const t of nodes) {
+    let hit = false;
+    const out = t.nodeValue.replace(PLACEHOLDER_RX, (m, path) => {
+      const v = resolve(path);
+      if (v === undefined) return m;
+      hit = true; n++;
+      return v === null ? '' : String(v);
+    });
+    if (!hit) continue;
+    t.nodeValue = out;
+    const el = t.parentElement;
+    if (el && PLACEHOLDER_RED.test(el.style.color)) el.style.color = '';
+  }
+  return n;
+}
+
 function applyData(data, root) {
   root = root || document;
   const templateMode = (data === null || data === undefined);
@@ -65,6 +100,15 @@ function applyData(data, root) {
     n++;
     const ok = templateMode ? true : evalCondition(el.getAttribute('data-if'), data);
     el.hidden = !ok;
+  }
+
+  // ---------- 3. variabel biasa <<nama>> / <<obj.field>> ----------
+  if (!templateMode) {
+    n += replacePlaceholders(root, path => {
+      const v = resolvePath(data, path);
+      if (v === undefined || v === null || typeof v === 'object') return undefined;   // array/objek bukan teks
+      return String(v);
+    });
   }
   return n;
 }
